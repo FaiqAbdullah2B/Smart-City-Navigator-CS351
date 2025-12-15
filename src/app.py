@@ -69,14 +69,10 @@ col1, col2 = st.columns([1, 2])
 
 with col1:
     st.title("🧩 Smart City")
-    st.markdown("Route planning with **Rush Hour** simulation.")
+    st.markdown("Routes are now weighted by **real AI predictions** for every single block.")
     
     st.header("1. Controls")
     
-    # --- TOGGLE FOR RUSH HOUR ---
-    is_rush_hour = st.checkbox("🚨 **Enable Rush Hour**", value=True, 
-                               help="Simulates 10x traffic in the center")
-
     col_s1, col_s2 = st.columns(2)
     start_row = col_s1.slider("Start Row", 0, 19, 2)
     start_col = col_s2.slider("Start Col", 0, 19, 2)
@@ -86,81 +82,74 @@ with col1:
     end_col = col_e2.slider("End Col", 0, 19, 18)
 
     st.divider()
-    hour = st.slider("Time", 0, 23, 14)
+    
+    st.subheader("2. Context")
+    hour = st.slider("Time of Day (24h)", 0, 23, 14)
+    
+    day_map = {0: 'Mon', 1: 'Tue', 2: 'Wed', 3: 'Thu', 4: 'Fri', 5: 'Sat', 6: 'Sun'}
+    day_val = st.select_slider("Day of Week", options=list(day_map.keys()), format_func=lambda x: day_map[x], value=2)
 
     start_lat, start_lon = grid_to_latlon(grid, start_row, start_col)
     end_lat, end_lon = grid_to_latlon(grid, end_row, end_col)
 
-    # 1. Pathfinding (Pass the Toggle State!)
-    path_coords, path_indices = router.find_path(
-        start_lat, start_lon, end_lat, end_lon, rush_hour=is_rush_hour
-    )
+    # 1. Pathfinding (NOW PASSING MODEL CONTEXT)
+    with st.spinner("AI calculating traffic for all 400 blocks..."):
+        path_coords, path_indices = router.find_path(
+            start_lat, start_lon, end_lat, end_lon, 
+            model=model, hour=hour, day=day_val
+        )
     
     # 2. Prediction
-    predicted_seconds = predict_duration(model, start_lat, start_lon, end_lat, end_lon, hour, 2)
-    st.metric("AI Duration Estimate", f"{round(predicted_seconds/60, 1)} mins")
+    predicted_seconds = predict_duration(model, start_lat, start_lon, end_lat, end_lon, hour, day_val)
+    st.metric("Total Trip Estimate", f"{round(predicted_seconds/60, 1)} mins")
 
 with col2:
-    grid_matrix = np.zeros((20, 20))
-    
-    # 1. Paint Traffic Zones ONLY if checkbox is active
-    if is_rush_hour:
-        grid_matrix[7:13, 7:13] = 0.3 # Buffer (Value 0.3)
-        grid_matrix[8:12, 8:12] = 0.6 # Core (Value 0.6)
+    # Use the ROUTER'S calculated cost grid for visualization if available
+    if router.cost_grid is not None:
+        grid_matrix = router.cost_grid.copy()
+        # Cap outliers for better color contrast
+        v_min, v_max = np.percentile(grid_matrix, [5, 95])
+        path_val = v_max * 1.5 
+    else:
+        grid_matrix = np.zeros((20, 20))
+        path_val = 1
 
-    # 2. Paint Path
+    # Paint Path
     if path_indices:
         for gid in path_indices:
             r, c = gid // 20, gid % 20
-            grid_matrix[r][c] = 1 # Path (Value 1.0)
+            grid_matrix[r][c] = path_val
 
-    # 3. Paint Start/End
-    grid_matrix[start_row][start_col] = 2 # Start (Value 2.0)
-    grid_matrix[end_row][end_col] = 3 # End (Value 3.0)
+    # Paint Start/End
+    grid_matrix[start_row][start_col] = path_val * 1.2 # Start
+    grid_matrix[end_row][end_col] = path_val * 1.2 # End
 
-    # --- FIXED COLORSCALE ---
-    # We map specific value ranges to colors.
-    # The scale goes from 0.0 to 1.0. 
-    # Since zmax=3, a value of 1.0 is represented by 1/3 = 0.33 on the scale.
     fig = go.Figure(data=go.Heatmap(
         z=grid_matrix,
         x=list(range(20)),
         y=list(range(20)),
-        zmin=0, zmax=3,
-        colorscale=[
-            [0.0, "#f0f2f6"],  # 0: Empty (Gray)
-            [0.05, "#f0f2f6"],
-            
-            [0.05, "#fdba74"], # 0.3: Buffer (Light Orange)
-            [0.15, "#fdba74"],
-            
-            [0.15, "#ea580c"], # 0.6: Core (Dark Orange)
-            [0.25, "#ea580c"],
-            
-            [0.25, "#3b82f6"], # 1.0: Path (Blue)
-            [0.50, "#3b82f6"],
-            
-            [0.50, "#22c55e"], # 2.0: Start (Green)
-            [0.80, "#22c55e"],
-            
-            [0.80, "#ef4444"], # 3.0: End (Red)
-            [1.0, "#ef4444"]
-        ],
-        showscale=False,
-        xgap=1, ygap=1
+        colorscale='Viridis', 
+        showscale=True,
+        xgap=1, ygap=1,
+        colorbar=dict(title="Sec/Block")
     ))
 
-    # Dynamic Labels
-    if is_rush_hour:
-        fig.add_annotation(x=9.5, y=9.5, text="RUSH<br>HOUR", showarrow=False, font=dict(color="white", size=10))
-        
     fig.add_annotation(x=start_col, y=start_row, text="S", showarrow=False, font=dict(color="white"))
     fig.add_annotation(x=end_col, y=end_row, text="E", showarrow=False, font=dict(color="white"))
 
     fig.update_layout(
-        title="Real-Time Grid Visualization",
+        title=f"AI Traffic Heatmap ({day_map[day_val]} @ {hour}:00)",
         yaxis=dict(autorange="reversed"),
         height=600,
         margin=dict(l=10, r=10, t=40, b=10)
     )
     st.plotly_chart(fig, use_container_width=True)
+
+    # --- LEGEND EXPLANATION ---
+    st.info("💡 **Heatmap Legend:**")
+    st.markdown("""
+    * **Color Intensity:** Represents the predicted **Time Cost (seconds)** to cross a single block.
+    * 🟣 **Purple / Dark:** Low Traffic (Fast travel).
+    * 🟡 **Yellow / Bright:** High Traffic (Slow travel).
+    * **The Brightest Line:** This is the path A* selected because it minimizes the total "yellowness" (time) encountered.
+    """)

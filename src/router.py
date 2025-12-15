@@ -1,5 +1,7 @@
 import heapq
 import numpy as np
+import pandas as pd # Needed for batch prediction
+
 try:
     from preprocessing import GridSystem
 except ImportError:
@@ -8,32 +10,77 @@ except ImportError:
 class CityRouter:
     def __init__(self):
         self.grid = GridSystem()
-        self.rush_hour_active = False # State to track the toggle
+        # 20x20 matrix to store "Seconds to cross this cell"
+        self.cost_grid = None 
+        self.min_cost = 1.0 # For heuristic scaling
+
+    def precompute_grid_costs(self, model, hour, day):
+        """
+        Runs a BATCH prediction for every cell in the grid to create a traffic map.
+        We simulate a short '1-block' trip starting from every cell.
+        """
+        if model is None:
+            self.cost_grid = np.ones((20, 20))
+            self.min_cost = 1.0
+            return
+
+        rows = []
+        # Calculate fixed deltas for a single block movement
+        # We assume a diagonal move (1 block lat + 1 block lon) represents general congestion
+        d_lat = self.grid.lat_step
+        d_lon = self.grid.lon_step
+        manhattan = d_lat + d_lon
+
+        # Build input rows for all 400 cells
+        for r in range(self.grid.rows):
+            for c in range(self.grid.cols):
+                p_lat, p_lon = self.grid.get_center_coordinates(r * self.grid.cols + c)
+                
+                rows.append({
+                    'passenger_count': 1,
+                    'pickup_longitude': p_lon,
+                    'pickup_latitude': p_lat,
+                    'dropoff_longitude': p_lon + d_lon, # Simulate slight movement
+                    'dropoff_latitude': p_lat + d_lat,
+                    'pickup_hour': hour,
+                    'pickup_day_of_week': day,
+                    'pickup_month': 6,
+                    'manhattan_dist': manhattan,
+                    'delta_lat': d_lat,
+                    'delta_lon': d_lon
+                })
+
+        # Create DataFrame
+        df_input = pd.DataFrame(rows)
+        
+        # Ensure column order matches model
+        if hasattr(model, "feature_names_in_"):
+            df_input = df_input[model.feature_names_in_]
+
+        # Batch Predict
+        try:
+            log_preds = model.predict(df_input)
+            seconds_preds = np.expm1(log_preds)
+            
+            # Reshape into 20x20 grid
+            self.cost_grid = seconds_preds.reshape((self.grid.rows, self.grid.cols))
+            
+            # Update heuristic scaler (Admissibility: h(n) <= true cost)
+            self.min_cost = np.min(self.cost_grid)
+            
+        except Exception as e:
+            print(f"Prediction failed: {e}")
+            self.cost_grid = np.ones((20, 20))
 
     def heuristic(self, a_id, b_id):
+        """
+        Estimated cost = Manhattan Distance (blocks) * Minimum Seconds Per Block.
+        This keeps units consistent (Seconds + Seconds).
+        """
         r1, c1 = a_id // self.grid.cols, a_id % self.grid.cols
         r2, c2 = b_id // self.grid.cols, b_id % self.grid.cols
-        return abs(r1 - r2) + abs(c1 - c2)
-
-    def get_traffic_cost(self, grid_id):
-        """
-        Returns cost of moving into a cell.
-        If Rush Hour is OFF, cost is always 1 (Flat).
-        """
-        if not self.rush_hour_active:
-            return 1
-            
-        row, col = grid_id // self.grid.cols, grid_id % self.grid.cols
-        
-        # 4x4 Core: High Cost (10x)
-        if 8 <= row <= 11 and 8 <= col <= 11:
-            return 10
-        
-        # 6x6 Buffer: Medium Cost (5x)
-        if 7 <= row <= 12 and 7 <= col <= 12:
-            return 5
-            
-        return 1
+        dist_blocks = abs(r1 - r2) + abs(c1 - c2)
+        return dist_blocks * self.min_cost
 
     def get_neighbors(self, current_id):
         neighbors = []
@@ -46,12 +93,13 @@ class CityRouter:
                 neighbors.append(new_r * self.grid.cols + new_c)
         return neighbors
 
-    def find_path(self, start_lat, start_lon, end_lat, end_lon, rush_hour=False):
+    def find_path(self, start_lat, start_lon, end_lat, end_lon, model=None, hour=12, day=0):
         """
-        Added `rush_hour` parameter to toggle logic.
+        Updated find_path that takes Model/Hour/Day to calculate real weights.
         """
-        self.rush_hour_active = rush_hour # Set state for this run
-        
+        # 1. Update the Cost Grid based on current AI Model context
+        self.precompute_grid_costs(model, hour, day)
+
         start_id = self.grid.get_grid_id(start_lat, start_lon)
         end_id = self.grid.get_grid_id(end_lat, end_lon)
 
@@ -71,7 +119,13 @@ class CityRouter:
                 return self.reconstruct_path(came_from, current, start_lat, start_lon, end_lat, end_lon)
             
             for neighbor in self.get_neighbors(current):
-                move_cost = self.get_traffic_cost(neighbor)
+                # --- COST LOGIC: READ FROM AI PREDICTIONS ---
+                # Get the row/col of the neighbor to lookup its cost
+                nr, nc = neighbor // self.grid.cols, neighbor % self.grid.cols
+                
+                # The cost to move INTO this node is the AI predicted duration for that node
+                move_cost = self.cost_grid[nr][nc]
+                
                 tentative_g_score = g_score[current] + move_cost
                 
                 if neighbor not in g_score or tentative_g_score < g_score[neighbor]:
