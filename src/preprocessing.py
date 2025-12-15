@@ -3,10 +3,8 @@ import numpy as np
 import os
 
 # --- PATH CONFIGURATION ---
-# Get the absolute path of the directory where this script lives
 SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
-# Navigate up one level to project root, then into data
-DATA_PATH = os.path.join(SCRIPT_DIR, '..', 'data', 'train.csv')
+DATA_DIR = os.path.join(SCRIPT_DIR, '..', 'data')
 
 # --- CONFIGURATION: MANHATTAN BOUNDING BOX ---
 MIN_LAT = 40.7000
@@ -25,47 +23,43 @@ class GridSystem:
         self.max_lon = MAX_LON
         self.rows = GRID_ROWS
         self.cols = GRID_COLS
-        
         self.lat_step = (self.max_lat - self.min_lat) / self.rows
         self.lon_step = (self.max_lon - self.min_lon) / self.cols
 
     def get_grid_id(self, lat, lon):
         if not (self.min_lat <= lat < self.max_lat) or not (self.min_lon <= lon < self.max_lon):
             return None
-        
-        row_idx = int((lat - self.min_lat) / self.lat_step)
-        col_idx = int((lon - self.min_lon) / self.lon_step)
-        
-        row_idx = min(row_idx, self.rows - 1)
-        col_idx = min(col_idx, self.cols - 1)
-        
+        row_idx = min(int((lat - self.min_lat) / self.lat_step), self.rows - 1)
+        col_idx = min(int((lon - self.min_lon) / self.lon_step), self.cols - 1)
         return row_idx * self.cols + col_idx
 
     def get_center_coordinates(self, grid_id):
         row_idx = grid_id // self.cols
         col_idx = grid_id % self.cols
-        
         center_lat = self.min_lat + (row_idx * self.lat_step) + (self.lat_step / 2)
         center_lon = self.min_lon + (col_idx * self.lon_step) + (self.lon_step / 2)
-        
         return center_lat, center_lon
 
-def load_and_clean_data(filepath=DATA_PATH):
+def load_and_clean_data(filename='train.csv'):
+    filepath = os.path.join(DATA_DIR, filename)
     print(f"Looking for dataset at: {filepath}")
+    
     if not os.path.exists(filepath):
-        print("ERROR: File still not found.")
+        print(f"ERROR: File {filename} not found in data folder.")
         return None
 
-    print("Loading dataset... (This might take 30-60 seconds)")
+    print(f"Loading {filename}...")
     df = pd.read_csv(filepath)
     
-    # 1. Datetime conversion
-    df['pickup_datetime'] = pd.to_datetime(df['pickup_datetime'])
+    # 1. Convert Timestamps
+    if 'pickup_datetime' in df.columns:
+        df['pickup_datetime'] = pd.to_datetime(df['pickup_datetime'])
     
-    # 2. Filter Duration (1 min to 2 hours)
-    df = df[(df['trip_duration'] >= 60) & (df['trip_duration'] <= 7200)]
+    # 2. Filter Duration (Only applies if the column exists - usually train/val)
+    if 'trip_duration' in df.columns:
+        df = df[(df['trip_duration'] >= 60) & (df['trip_duration'] <= 7200)]
     
-    # 3. Filter Coordinates (Manhattan Box)
+    # 3. Filter Coordinates (Manhattan Grid Box)
     df = df[
         (df['pickup_latitude'] >= MIN_LAT) & (df['pickup_latitude'] < MAX_LAT) &
         (df['pickup_longitude'] >= MIN_LON) & (df['pickup_longitude'] < MAX_LON) &
@@ -73,9 +67,8 @@ def load_and_clean_data(filepath=DATA_PATH):
         (df['dropoff_longitude'] >= MIN_LON) & (df['dropoff_longitude'] < MAX_LON)
     ]
     
-    print(f"Cleaned Data Size: {len(df)} rows")
+    print(f"Cleaned {filename} Size: {len(df)} rows")
     return df
 
 if __name__ == "__main__":
-    # Test Data Loading
-    df = load_and_clean_data()
+    load_and_clean_data('train.csv')
