@@ -1,4 +1,4 @@
-import heapq
+import math
 import numpy as np
 import pandas as pd # Needed for batch prediction
 
@@ -94,9 +94,11 @@ class CityRouter:
                 neighbors.append(new_r * self.grid.cols + new_c)
         return neighbors
 
+    import math # Only needed if you use math.inf for initialization
+
     def find_path(self, start_lat, start_lon, end_lat, end_lon, model=None, hour=12, day=0):
         """
-        Updated find_path that takes Model/Hour/Day to calculate real weights.
+        Updated find_path using the list-based A* implementation.
         """
         # 1. Update the Cost Grid based on current AI Model context
         self.precompute_grid_costs(model, hour, day)
@@ -107,35 +109,58 @@ class CityRouter:
         if start_id is None or end_id is None:
             return None, None 
 
-        open_set = []
-        heapq.heappush(open_set, (0, start_id))
-        came_from = {}
+        fringe = [start_id] # keeps the front-most nodes (next to be evaluated)
+        # to track "known" nodes, similar to how it works in your heapq code.
+        came_from = {}               # Equivalent to your 'parents'
         g_score = {start_id: 0}
-        f_score = {start_id: self.heuristic(start_id, end_id)}
-        
-        while open_set:
-            current_f, current = heapq.heappop(open_set)
+        f_score = {start_id: self.heuristic(start_id, end_id)} 
+
+        while len(fringe) != 0:
             
+            # Initialize min_f with the first element's score
+            min_f = g_score[fringe[0]] + self.heuristic(fringe[0], end_id)
+            index = 0
+
+            # Iterate through all nodes in the fringe list to find the minimum f
+            for i in range(len(fringe)):
+                node_id = fringe[i]
+                current_f = g_score.get(node_id, math.inf) + self.heuristic(node_id, end_id)
+                
+                if current_f < min_f:
+                    index = i
+                    min_f = current_f
+            
+            # Pop the node with the lowest F-score
+            current = fringe.pop(index)
+
             if current == end_id:
+                # Reconstruct path and return
                 return self.reconstruct_path(came_from, current, start_lat, start_lon, end_lat, end_lon)
             
+            # 3. Explore Neighbors
             for neighbor in self.get_neighbors(current):
-                # --- COST LOGIC: READ FROM AI PREDICTIONS ---
-                # Get the row/col of the neighbor to lookup its cost
-                nr, nc = neighbor // self.grid.cols, neighbor % self.grid.cols
                 
-                # The cost to move INTO this node is the AI predicted duration for that node
+                # --- COST LOGIC: READ FROM AI PREDICTIONS ---
+                nr, nc = neighbor // self.grid.cols, neighbor % self.grid.cols
                 move_cost = self.cost_grid[nr][nc]
                 
-                tentative_g_score = g_score[current] + move_cost
+                tentative_g_score = g_score.get(current, math.inf) + move_cost
                 
+                # 4. Update Path if a Shorter One is Found
                 if neighbor not in g_score or tentative_g_score < g_score[neighbor]:
+                    
+                    # Record the better path
                     came_from[neighbor] = current
                     g_score[neighbor] = tentative_g_score
-                    f = tentative_g_score + self.heuristic(neighbor, end_id)
-                    f_score[neighbor] = f
-                    heapq.heappush(open_set, (f, neighbor))
                     
+                    # Calculate new F-score (G + H)
+                    f = tentative_g_score + self.heuristic(neighbor, end_id)
+                    f_score[neighbor] = f 
+                    
+                    # Add neighbor to fringe if it's not already there (or re-open it)
+                    if neighbor not in fringe:
+                        fringe.append(neighbor)
+                        
         return None, None
 
     def reconstruct_path(self, came_from, current, start_lat, start_lon, end_lat, end_lon):

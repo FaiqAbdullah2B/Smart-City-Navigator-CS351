@@ -149,7 +149,7 @@ with col2:
     st.info("💡 **Heatmap Legend:**")
     st.markdown("""
     * **Color Intensity:** Represents the predicted **Time Cost (seconds)** to cross a single block.
-    * 🟣 **Purple / Dark:** Low Traffic (Fast travel).
-    * 🟡 **Yellow / Bright:** High Traffic (Slow travel).
-    * **The Brightest Line:** This is the path A* selected because it minimizes the total "yellowness" (time) encountered.
+    *  **White:** Low Traffic (Fast travel).
+    *  **Red:** High Traffic (Slow travel).
+    * **The Darkest Line:** This is the path A* selected because it minimizes the total "redness" (time) encountered.
     """)
