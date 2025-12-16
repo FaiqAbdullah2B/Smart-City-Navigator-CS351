@@ -89,6 +89,7 @@ class CityRouter:
         
         for dr, dc in moves:
             new_r, new_c = row + dr, col + dc
+            # Check bounds
             if 0 <= new_r < self.grid.rows and 0 <= new_c < self.grid.cols:
                 neighbors.append(new_r * self.grid.cols + new_c)
         return neighbors

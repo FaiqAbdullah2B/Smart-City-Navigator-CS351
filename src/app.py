@@ -128,7 +128,7 @@ with col2:
         z=grid_matrix,
         x=list(range(20)),
         y=list(range(20)),
-        colorscale='Viridis', 
+        colorscale='Reds', 
         showscale=True,
         xgap=1, ygap=1,
         colorbar=dict(title="Sec/Block")
