@@ -100,7 +100,7 @@ class CityRouter:
         """
         Updated find_path using the list-based A* implementation.
         """
-        # 1. Update the Cost Grid based on current AI Model context
+        # Update the Cost Grid based on current AI Model context
         self.precompute_grid_costs(model, hour, day)
 
         start_id = self.grid.get_grid_id(start_lat, start_lon)
@@ -110,10 +110,9 @@ class CityRouter:
             return None, None 
 
         fringe = [start_id] # keeps the front-most nodes (next to be evaluated)
-        # to track "known" nodes, similar to how it works in your heapq code.
-        came_from = {}               # Equivalent to your 'parents'
-        g_score = {start_id: 0}
-        f_score = {start_id: self.heuristic(start_id, end_id)} 
+        came_from = {}      # parents
+        g_score = {start_id: 0} # storing the true cost
+        f_score = {start_id: self.heuristic(start_id, end_id)}
 
         while len(fringe) != 0:
             
@@ -137,16 +136,17 @@ class CityRouter:
                 # Reconstruct path and return
                 return self.reconstruct_path(came_from, current, start_lat, start_lon, end_lat, end_lon)
             
-            # 3. Explore Neighbors
+            # Explore Neighbors
             for neighbor in self.get_neighbors(current):
                 
-                # --- COST LOGIC: READ FROM AI PREDICTIONS ---
+                # calculating the cost
                 nr, nc = neighbor // self.grid.cols, neighbor % self.grid.cols
-                move_cost = self.cost_grid[nr][nc]
+                move_cost = self.cost_grid[nr][nc] # get cost from the cost grid
                 
+                # Return current + move_cost if found. Else math.inf
                 tentative_g_score = g_score.get(current, math.inf) + move_cost
                 
-                # 4. Update Path if a Shorter One is Found
+                # Update Path if a Shorter One is Found
                 if neighbor not in g_score or tentative_g_score < g_score[neighbor]:
                     
                     # Record the better path
